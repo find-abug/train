@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0e1116" />
+  <title>间歇计时</title>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --card: #171c24;
+      --line: #2a3340;
+      --text: #f4f7fb;
+      --muted: #8b97a8;
+      --work: #ff6b3d;
+      --rest: #3ddc97;
+      --hand: #f4f7fb;
+      --danger: #ff5d73;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: radial-gradient(1200px 700px at 50% -10%, #1c2633 0%, var(--bg) 55%);
+      color: var(--text);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    body {
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      padding: max(16px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+    }
+
+    .app {
+      width: min(440px, 100%);
+      display: grid;
+      gap: 18px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 0.04em;
+    }
+
+    .phase {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .phase strong {
+      color: var(--work);
+      font-weight: 650;
+    }
+
+    .phase.rest strong { color: var(--rest); }
+    .phase.done strong { color: var(--text); }
+
+    .countdown {
+      margin: 12px auto 4px;
+      text-align: center;
+    }
+
+    .time {
+      font-variant-numeric: tabular-nums;
+      font-size: clamp(96px, 28vw, 144px);
+      font-weight: 650;
+      line-height: 0.9;
+      letter-spacing: -0.04em;
+      color: var(--work);
+    }
+
+    .countdown.rest .time { color: var(--rest); }
+    .countdown.done .time { color: var(--text); }
+
+    .sub {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: 0.12em;
+    }
+
+    .panel {
+      background: color-mix(in srgb, var(--card) 92%, transparent);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #10151c;
+      color: var(--text);
+      border-radius: 12px;
+      padding: 12px 8px;
+      font-size: 20px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    input:disabled { opacity: 0.55; }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1.4fr 0.8fr;
+      gap: 10px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 14px;
+      min-height: 52px;
+      font-size: 17px;
+      font-weight: 650;
+      color: #10140f;
+      background: var(--work);
+    }
+
+    button.ghost {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
+    button:disabled { opacity: 0.4; }
+
+    .hint {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <h1>间歇计时</h1>
+      <p class="phase" id="phase"><strong>准备</strong></p>
+    </header>
+
+    <div class="countdown" id="countdown">
+      <div class="time" id="time">30</div>
+      <div class="sub" id="setLabel">第 1 / 3 组</div>
+    </div>
+
+    <section class="panel">
+      <label>运动（秒）
+        <input id="workInput" type="number" min="1" max="3600" inputmode="numeric" value="30" />
+      </label>
+      <label>休息（秒）
+        <input id="restInput" type="number" min="0" max="3600" inputmode="numeric" value="10" />
+      </label>
+      <label>组数
+        <input id="setsInput" type="number" min="1" max="99" inputmode="numeric" value="3" />
+      </label>
+    </section>
+
+    <div class="actions">
+      <button id="primary" type="button">开始</button>
+      <button id="reset" class="ghost" type="button">重置</button>
+    </div>
+    <p class="hint">说完「动」再开始运动倒计时，说完「停」再开始休息倒计时。倒计时期间每秒一声滴答。</p>
+  </main>
+
+  <script>
+    const workInput = document.getElementById("workInput");
+    const restInput = document.getElementById("restInput");
+    const setsInput = document.getElementById("setsInput");
+    const timeEl = document.getElementById("time");
+    const phaseEl = document.getElementById("phase");
+    const setLabel = document.getElementById("setLabel");
+    const primary = document.getElementById("primary");
+    const resetBtn = document.getElementById("reset");
+    const countdown = document.getElementById("countdown");
+
+    const state = {
+      status: "idle",
+      phase: "work",
+      set: 1,
+      remainingMs: 0,
+      durationMs: 0,
+      endsAt: 0,
+      timer: 0,
+      raf: 0,
+      ticks: [],
+      clockOrigin: 0,
+      clockRemain: 0,
+      speechTimer: 0,
+      speechToken: 0,
+      holdingForSpeech: false,
+      lastSecond: null,
+      audio: null,
+      wakeLock: null
+    };
+
+    function clampInt(input, min, max, fallback) {
+      const value = Math.round(Number(input.value));
+      if (!Number.isFinite(value)) return fallback;
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function settings() {
+      return {
+        work: clampInt(workInput, 1, 3600, 30),
+        rest: clampInt(restInput, 0, 3600, 10),
+        sets: clampInt(setsInput, 1, 99, 3)
+      };
+    }
+
+    function syncInputs() {
+      const current = settings();
+      workInput.value = String(current.work);
+      restInput.value = String(current.rest);
+      setsInput.value = String(current.sets);
+    }
+
+    function ensureAudio() {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return null;
+      if (!state.audio) state.audio = new AudioCtx();
+      if (state.audio.state === "suspended") state.audio.resume();
+      return state.audio;
+    }
+
+    function outputDelay(ctx) {
+      const delay = ctx.outputLatency || ctx.baseLatency || 0;
+      return Math.min(0.2, Math.max(0, delay));
+    }
+
+    function stopTicks() {
+      const ctx = state.audio;
+      const now = ctx ? ctx.currentTime : 0;
+      state.ticks.forEach((osc) => {
+        try { osc.stop(now); } catch (_) {}
+      });
+      state.ticks = [];
+    }
+
+    function stopClock() {
+      clearInterval(state.timer);
+      if (state.raf) cancelAnimationFrame(state.raf);
+      state.raf = 0;
+      stopTicks();
+    }
+
+    function scheduleTicks(origin, remainSec) {
+      const ctx = ensureAudio();
+      if (!ctx || remainSec <= 0.02) return;
+      const delay = outputDelay(ctx);
+      const frac = remainSec - Math.floor(remainSec);
+      const first = frac < 0.001 ? 1 : frac;
+      const end = origin + remainSec;
+      for (let hearAt = origin + first; hearAt <= end + 0.001; hearAt += 1) {
+        if (hearAt < ctx.currentTime - 0.02) continue;
+        const when = Math.max(ctx.currentTime + 0.005, hearAt - delay);
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "square";
+        osc.frequency.setValueAtTime(1400, when);
+        gain.gain.setValueAtTime(0.0001, when);
+        gain.gain.exponentialRampToValueAtTime(0.08, when + 0.004);
+        gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.04);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(when);
+        osc.stop(when + 0.045);
+        state.ticks.push(osc);
+      }
+    }
+
+    function clockNow() {
+      return state.audio ? state.audio.currentTime : performance.now() / 1000;
+    }
+
+    function readRemain() {
+      return Math.max(0, state.clockRemain - (clockNow() - state.clockOrigin));
+    }
+
+    function cancelSpeech() {
+      state.speechToken += 1;
+      clearTimeout(state.speechTimer);
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+    }
+
+    function speakThen(text, onDone) {
+      const token = ++state.speechToken;
+      clearTimeout(state.speechTimer);
+      let settled = false;
+      const finish = () => {
+        if (settled || token !== state.speechToken) return;
+        settled = true;
+        clearTimeout(state.speechTimer);
+        onDone();
+      };
+      if (!window.speechSynthesis || !text) {
+        finish();
+        return;
+      }
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+        window.speechSynthesis.cancel();
+      }
+      state.speechTimer = setTimeout(() => {
+        if (token !== state.speechToken) return;
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = "zh-CN";
+        utter.rate = 1;
+        const voices = window.speechSynthesis.getVoices();
+        const voice = voices.find((item) => /zh([-_]CN)?/i.test(item.lang));
+        if (voice) utter.voice = voice;
+        utter.onend = finish;
+        utter.onerror = (event) => {
+          if (event.error === "interrupted" || event.error === "canceled") return;
+          finish();
+        };
+        window.speechSynthesis.speak(utter);
+        state.speechTimer = setTimeout(finish, 4000);
+      }, 60);
+    }
+
+    function paint() {
+      const secondsLeft = state.status === "finished"
+        ? 0
+        : Math.max(0, Math.ceil(state.remainingMs / 1000 - 0.0001));
+      const shown = state.status === "idle" ? settings().work : secondsLeft;
+      timeEl.textContent = String(shown);
+
+      const cfg = settings();
+      const setNo = state.status === "idle" ? 1 : state.set;
+      setLabel.textContent = state.status === "finished"
+        ? "完成"
+        : `第 ${setNo} / ${cfg.sets} 组`;
+
+      countdown.className = "countdown" + (state.phase === "rest" ? " rest" : "") + (state.status === "finished" ? " done" : "");
+      phaseEl.className = "phase" + (state.phase === "rest" ? " rest" : "") + (state.status === "finished" ? " done" : "");
+      const label = state.status === "finished"
+        ? "完成"
+        : state.status === "idle"
+          ? "准备"
+          : state.status === "paused"
+            ? (state.phase === "rest" ? "休息 · 已暂停" : "运动 · 已暂停")
+            : (state.phase === "rest" ? "休息" : "运动");
+      phaseEl.innerHTML = `<strong>${label}</strong>`;
+
+      const locked = state.status === "running" || state.status === "paused" || state.status === "speaking";
+      workInput.disabled = locked;
+      restInput.disabled = locked;
+      setsInput.disabled = locked;
+      primary.textContent = state.status === "running" || state.status === "speaking"
+        ? "暂停"
+        : state.status === "paused" ? "继续" : "开始";
+    }
+
+    function runCountdown() {
+      if (state.status !== "speaking") return;
+      state.holdingForSpeech = false;
+      state.status = "running";
+      const now = clockNow();
+      state.clockOrigin = now;
+      state.clockRemain = state.remainingMs / 1000;
+      state.lastSecond = Math.ceil(state.clockRemain - 0.0001);
+      scheduleTicks(now, state.clockRemain);
+      if (state.raf) cancelAnimationFrame(state.raf);
+      state.raf = requestAnimationFrame(onFrame);
+      paint();
+    }
+
+    function beginPhase(phase, setNo, cue) {
+      const cfg = settings();
+      const seconds = phase === "work" ? cfg.work : cfg.rest;
+      stopClock();
+      state.phase = phase;
+      state.set = setNo;
+      state.durationMs = seconds * 1000;
+      state.remainingMs = state.durationMs;
+      state.lastSecond = seconds;
+      state.holdingForSpeech = true;
+      state.status = "speaking";
+      paint();
+      speakThen(cue, runCountdown);
+    }
+
+    function finish() {
+      state.status = "finished";
+      state.remainingMs = 0;
+      state.phase = "work";
+      stopClock();
+      releaseWakeLock();
+      paint();
+    }
+
+    function advance() {
+      stopClock();
+      const cfg = settings();
+      if (state.phase === "work") {
+        if (cfg.rest > 0 && state.set < cfg.sets) {
+          beginPhase("rest", state.set, "停");
+          return;
+        }
+        if (state.set < cfg.sets) {
+          beginPhase("work", state.set + 1, "动");
+          return;
+        }
+        finish();
+        return;
+      }
+      if (state.set < cfg.sets) {
+        beginPhase("work", state.set + 1, "动");
+        return;
+      }
+      finish();
+    }
+
+    function onFrame() {
+      if (state.status !== "running") return;
+      const remain = readRemain();
+      state.remainingMs = remain * 1000;
+      if (remain <= 0.001) {
+        advance();
+        return;
+      }
+      state.lastSecond = Math.ceil(remain - 0.0001);
+      paint();
+      state.raf = requestAnimationFrame(onFrame);
+    }
+
+    async function keepAwake() {
+      if (!navigator.wakeLock) return;
+      try {
+        state.wakeLock = await navigator.wakeLock.request("screen");
+      } catch (_) {}
+    }
+
+    function releaseWakeLock() {
+      if (state.wakeLock) {
+        state.wakeLock.release().catch(() => {});
+        state.wakeLock = null;
+      }
+    }
+
+    function start() {
+      syncInputs();
+      ensureAudio();
+      keepAwake();
+      beginPhase("work", 1, "动");
+    }
+
+    function pause() {
+      if (state.status === "speaking") {
+        cancelSpeech();
+        state.holdingForSpeech = true;
+        state.status = "paused";
+        paint();
+        return;
+      }
+      state.remainingMs = readRemain() * 1000;
+      state.status = "paused";
+      stopClock();
+      paint();
+    }
+
+    function resume() {
+      ensureAudio();
+      keepAwake();
+      if (state.holdingForSpeech) {
+        state.status = "speaking";
+        paint();
+        speakThen(state.phase === "rest" ? "停" : "动", runCountdown);
+        return;
+      }
+      state.status = "running";
+      const now = clockNow();
+      state.clockOrigin = now;
+      state.clockRemain = state.remainingMs / 1000;
+      scheduleTicks(now, state.clockRemain);
+      state.raf = requestAnimationFrame(onFrame);
+      paint();
+    }
+
+    function reset() {
+      stopClock();
+      cancelSpeech();
+      releaseWakeLock();
+      state.holdingForSpeech = false;
+      state.status = "idle";
+      state.phase = "work";
+      state.set = 1;
+      state.lastSecond = null;
+      const cfg = settings();
+      state.durationMs = cfg.work * 1000;
+      state.remainingMs = state.durationMs;
+      paint();
+    }
+
+    primary.addEventListener("click", () => {
+      if (state.status === "idle" || state.status === "finished") start();
+      else if (state.status === "running" || state.status === "speaking") pause();
+      else resume();
+    });
+
+    resetBtn.addEventListener("click", reset);
+
+    [workInput, restInput, setsInput].forEach((input) => {
+      input.addEventListener("change", () => {
+        syncInputs();
+        if (state.status === "idle") reset();
+      });
+    });
+
+    reset();
+  </script>
+</body>
+</html>
